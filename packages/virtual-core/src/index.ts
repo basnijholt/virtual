@@ -1004,7 +1004,23 @@ export class Virtualizer<
       if (this.scrollOffset !== null) this.scrollOffset += delta
       return true
     } else {
-      const offset = this.getScrollOffset()
+      const live =
+        this._holdOffset === 0 &&
+        this._clampedAdjustment === null &&
+        (this.options.observeElementOffset ===
+          (observeElementOffset as unknown) ||
+          this.options.observeElementOffset ===
+            (observeWindowOffset as unknown))
+          ? this._readElementOffset()
+          : null
+      const offset =
+        live !== null &&
+        this._lastElementOffset !== null &&
+        live !== this._lastElementOffset &&
+        (this.pendingWrite === null ||
+          !approxEqual(live, this.pendingWrite.target))
+          ? live
+          : this.getScrollOffset()
       this._clampedAdjustment = this._clampedBy(offset + delta)
       const write = this._scrollToOffset(offset, {
         adjustments: delta,
@@ -1020,7 +1036,7 @@ export class Virtualizer<
       // `scrollToFn` that reports the write synchronously has already set
       // `scrollOffset` to the read-back (and cleared `pendingWrite`).
       if (this.scrollOffset !== null) {
-        if (this.pendingWrite === write) this.scrollOffset += delta
+        if (this.pendingWrite === write) this.scrollOffset = offset + delta
         // Clamp only the lower bound: a negative offset is unreachable, and
         // on an unscrollable element (content fits the viewport) no scroll
         // event ever fires to correct it, permanently skewing

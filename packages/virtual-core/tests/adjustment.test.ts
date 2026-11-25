@@ -5,6 +5,7 @@ import {
   observeElementOffset,
   observeElementRect,
 } from '../src/index'
+import { makeMockScrollElement } from './helpers'
 
 test('scroll-up jank: backward-scroll skips adjustment on re-measurement by default', () => {
   // Default behavior: when an already-measured above-viewport item resizes
@@ -581,4 +582,46 @@ test('resize batch rebuilds the layout once', () => {
   expect(v.scrollOffset).toBe(before + 30)
   expect(v.getOffsetForIndex(40, 'start')?.[0]).toBe(2030)
   expect(getItemKey.mock.calls.length).toBeLessThan(2 * count)
+})
+
+test('applyScrollAdjustment reconciles an unseen live scrollTop move before writing', () => {
+  const mockWindow = {
+    setTimeout: vi.fn(() => 1),
+    clearTimeout: vi.fn(),
+    requestAnimationFrame: vi.fn(),
+    cancelAnimationFrame: vi.fn(),
+    performance: { now: () => 0 },
+  }
+  const el = makeMockScrollElement({
+    scrollTop: 400,
+    scrollLeft: 0,
+    scrollHeight: 5000,
+    clientHeight: 200,
+    offsetHeight: 200,
+    ownerDocument: { defaultView: mockWindow },
+  })
+  const writes: Array<number> = []
+  const v = new Virtualizer<any, any>({
+    count: 100,
+    estimateSize: () => 50,
+    initialOffset: 400,
+    getScrollElement: () => el,
+    scrollToFn: (offset, { adjustments = 0 }) => {
+      writes.push(offset + adjustments)
+      el.scrollTop = offset + adjustments
+    },
+    observeElementRect: (_inst, cb) => cb({ width: 400, height: 200 }),
+    observeElementOffset,
+  })
+  v._willUpdate()
+  v['getMeasurements']()
+  el._dispatch('scroll')
+  writes.length = 0
+
+  el.scrollTop = 1000
+  v.resizeItem(0, 30)
+
+  expect(writes).toEqual([980])
+  expect(v.scrollOffset).toBe(980)
+  expect(el.scrollTop).toBe(980)
 })
