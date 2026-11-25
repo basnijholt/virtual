@@ -605,7 +605,11 @@ export class Virtualizer<
       if (state?.phase === 'queued' && flingCaught(state.samples ?? [])) {
         this.scrollState = null
       }
+      const heldBefore = this._holdOffset
       this._flushHoldIfReady(true)
+      if (this._holdOffset < 0 && this._holdOffset === heldBefore) {
+        this.notify(true)
+      }
       this._writeAwaitingCommand()
       // A clamped write the touch held back; a command written above has
       // cleared it.
@@ -1027,7 +1031,8 @@ export class Virtualizer<
         // getDistanceFromEnd() and wedging the hold flush (#1229).
         // Upper-bound overflow stays untouched — it is transiently
         // legitimate mid-prepend while the consumer's sizer catches up.
-        if (this.scrollOffset < 0) this.scrollOffset = 0
+        if (this._holdOffset === 0 && this.scrollOffset < 0)
+          this.scrollOffset = 0
       }
       return true
     }
@@ -1462,7 +1467,19 @@ export class Virtualizer<
     if (!this._canWriteScroll()) return
     // Let a travelling smooth scroll land first (see `_willUpdate`).
     if (this.scrollState?.phase === 'smooth') return
-    this._holdOffset = 0
+    const cmd = this.getCommandWrittenOffset()
+    const live = cmd === null ? this._readElementOffset() : null
+    const nextHold =
+      live !== null && live + this._holdOffset < 0 ? live + this._holdOffset : 0
+    if (nextHold === this._holdOffset) return
+    this._holdOffset = nextHold
+    if (nextHold < 0) {
+      this.scrollOffset = nextHold
+      this._clampedAdjustment = null
+      this._scrollToOffset(nextHold)
+      this.notify(sync)
+      return
+    }
     // A held shrink can leave the layout position above the top; the
     // element clamps that to 0 without an event to say so (#1229).
     if (this.scrollOffset !== null && this.scrollOffset < 0) {
@@ -1473,7 +1490,7 @@ export class Virtualizer<
     // `scrollOffset` is still the pre-command position until its read-back,
     // and a command that closes the touch tail makes a write possible with
     // no scroll event in between, so this flush can run first.
-    const target = this.getCommandWrittenOffset() ?? this.getScrollOffset()
+    const target = cmd ?? this.getScrollOffset()
     // A consumer that sizes the container after this write gets the retry
     // (#1258).
     this._clampedAdjustment = this._clampedBy(target)

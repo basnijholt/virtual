@@ -1724,3 +1724,33 @@ test('iOS deferral: a clamped compensation is not retried while a touch owns the
     expect(v['_clampedAdjustment']).toBeNull()
   })
 })
+
+test('iOS hold: negative hold never flushes past scrollTop 0 and absorbs on scroll down', () => {
+  const h = makeDeferralHarness({ ios: true, start: 100 })
+  h.writes.length = 0
+
+  h.touch('touchstart')
+  h.run(() => {
+    h.scroll(true, 100)
+    h.v.resizeItem(0, 10)
+    h.v.resizeItem(1, 10)
+  })
+  expect(h.v['_holdOffset']).toBe(-80)
+
+  h.run(() => h.scroll(true, 30))
+  const row2Before =
+    h.v.getVirtualItems().find((i) => i.index === 2)!.start - h.el.scrollTop
+  h.touch('touchend')
+  h.expireTail()
+
+  expect(h.el.scrollTop).toBe(0)
+  expect(h.v['_holdOffset']).toBe(-50)
+  expect(
+    h.v.getVirtualItems().find((i) => i.index === 2)!.start - h.el.scrollTop,
+  ).toBe(row2Before)
+
+  h.advance(1001)
+  h.run(() => h.scroll(true, 60))
+  expect(h.v['_holdOffset']).toBe(0)
+  expect(h.el.scrollTop).toBe(10)
+})
