@@ -16,6 +16,7 @@ function createChatVirtualizer({
   threshold = 1,
   paddingEnd = 0,
   scrollMargin = 0,
+  anchorSkipLeading = 0,
 }: {
   messages: Array<{ id: string }>
   offset: number
@@ -25,6 +26,7 @@ function createChatVirtualizer({
   threshold?: number
   paddingEnd?: number
   scrollMargin?: number
+  anchorSkipLeading?: number
 }) {
   let currentMessages = messages
   const scrollToFn = vi.fn()
@@ -86,6 +88,7 @@ function createChatVirtualizer({
       scrollEndThreshold: threshold,
       paddingEnd,
       scrollMargin,
+      anchorSkipLeading,
     }
   }
 
@@ -723,4 +726,43 @@ test('#1258: cleanup drops a pending clamped write', () => {
   virtualizer['cleanup']()
 
   expect(virtualizer['_clampedAdjustment']).toBeNull()
+})
+
+test('anchorSkipLeading skips unchanged leading items in the top half on prepend', () => {
+  const base = [
+    { id: 'load-older' },
+    ...Array.from({ length: 5 }, (_, i) => ({ id: `m-${i}` })),
+  ]
+  const prepended = [
+    base[0]!,
+    { id: 'old-0' },
+    { id: 'old-1' },
+    { id: 'old-2' },
+    ...base.slice(1),
+  ]
+
+  // Short leading item (50px): m-0 starts at 50 < 20 + 200/2, so anchor moves to m-0.
+  const short = createChatVirtualizer({
+    messages: base,
+    offset: 20,
+    anchorSkipLeading: 1,
+  })
+  short.setMessages(prepended)
+  expect(short.virtualizer.scrollOffset).toBe(170)
+  expect(short.scrollToFn).toHaveBeenCalledWith(
+    170,
+    expect.anything(),
+    short.virtualizer,
+  )
+
+  // Tall leading item (150px): m-0 starts at 150 >= 0 + 200/2, so stay anchored on item 0.
+  const tall = createChatVirtualizer({
+    messages: base,
+    offset: 0,
+    itemSize: 150,
+    anchorSkipLeading: 1,
+  })
+  tall.setMessages(prepended)
+  expect(tall.virtualizer.scrollOffset).toBe(0)
+  expect(tall.scrollToFn).not.toHaveBeenCalled()
 })

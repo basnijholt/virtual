@@ -393,6 +393,7 @@ export interface VirtualizerOptions<
   anchorTo?: ScrollAnchor
   followOnAppend?: FollowOnAppend
   scrollEndThreshold?: number
+  anchorSkipLeading?: number
   isScrollingResetDelay?: number
   useScrollendEvent?: boolean
   enabled?: boolean
@@ -821,6 +822,7 @@ export class Virtualizer<
       anchorTo: 'start',
       followOnAppend: false,
       scrollEndThreshold: 1,
+      anchorSkipLeading: 0,
       isScrollingResetDelay: 150,
       enabled: true,
       isRtl: false,
@@ -867,14 +869,25 @@ export class Virtualizer<
 
       if (didEdgeKeysChange) {
         edgeKeysChanged = true
-        const item =
+        const scrollOffset = this.getScrollOffset()
+        let item =
           prevCount > 0
-            ? (this.getVirtualItemForOffset(this.getScrollOffset()) ??
-              measurements[0])
+            ? (this.getVirtualItemForOffset(scrollOffset) ?? measurements[0])
             : null
+        while (
+          item &&
+          item.index < merged.anchorSkipLeading &&
+          item.index + 1 < prevCount &&
+          item.index < nextCount &&
+          merged.getItemKey(item.index) === getPreviousKey(item.index)
+        ) {
+          const next = measurements[item.index + 1]
+          if (!next || next.start >= scrollOffset + this.getSize() / 2) break
+          item = next
+        }
 
         if (item) {
-          anchor = [item.key, this.getScrollOffset() - item.start]
+          anchor = [item.key, scrollOffset - item.start]
         }
 
         const behavior =
