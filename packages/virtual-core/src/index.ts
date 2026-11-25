@@ -393,6 +393,7 @@ export interface VirtualizerOptions<
   anchorTo?: ScrollAnchor
   followOnAppend?: FollowOnAppend
   scrollEndThreshold?: number
+  holdScrollDuringWheel?: boolean
   isScrollingResetDelay?: number
   useScrollendEvent?: boolean
   enabled?: boolean
@@ -540,6 +541,9 @@ export class Virtualizer<
   // `_flushHoldIfReady`: the rows re-render in layout coordinates and the
   // element moves by the same amount in one paint.
   private _holdOffset = 0
+  private _wheelLive = false
+  private _wheelTimer: number | null = null
+  private _wheelSince = 0
   // Whether the element's last scroll event reported a position past either
   // edge (the rubber-band bounce). Judged at report time against the
   // element's own max, with a 1px tolerance for a fractional scrollTop: a
@@ -821,6 +825,7 @@ export class Virtualizer<
       anchorTo: 'start',
       followOnAppend: false,
       scrollEndThreshold: 1,
+      holdScrollDuringWheel: false,
       isScrollingResetDelay: 150,
       enabled: true,
       isRtl: false,
@@ -1087,6 +1092,12 @@ export class Virtualizer<
     // just removed), deferring every adjustment on the new element until
     // its next touch cycle.
     this._holdOffset = 0
+    this._wheelLive = false
+    if (this._wheelTimer !== null && this.targetWindow) {
+      this.targetWindow.clearTimeout(this._wheelTimer)
+    }
+    this._wheelTimer = null
+    this._wheelSince = 0
     this._reportedOverscroll = false
     this._trailing = 0
     // (The gesture was ended with its listeners, in the unsubs above.)
@@ -1286,9 +1297,42 @@ export class Virtualizer<
 
       // Touch event listeners (iOS-aware deferral).
       if ('addEventListener' in this.scrollElement) {
-        this.unsubs.push(
-          this._iosGesture.listen(this.scrollElement as unknown as EventTarget),
-        )
+        const el = this.scrollElement as unknown as EventTarget
+        this.unsubs.push(this._iosGesture.listen(el))
+        const scheduleWheelFlush = (delay: number) => {
+          if (!this.targetWindow) return
+          this._wheelLive = true
+          if (this._wheelTimer !== null) {
+            this.targetWindow.clearTimeout(this._wheelTimer)
+          }
+          this._wheelTimer = this.targetWindow.setTimeout(() => {
+            const live = this._readElementOffset()
+            if (
+              live !== null &&
+              this._lastElementOffset !== null &&
+              Math.abs(live - this._lastElementOffset) >= 1 &&
+              this.now() - this._wheelSince < 1e3
+            ) {
+              this._lastElementOffset = live
+              scheduleWheelFlush(50)
+              return
+            }
+            this._wheelTimer = null
+            this._wheelLive = false
+            if (live !== null && this._holdOffset !== 0) {
+              this.scrollOffset = live + this._holdOffset
+            }
+            this._flushHoldIfReady(true)
+            this._retryClampedAdjustment()
+          }, delay)
+        }
+        const onWheel = () => {
+          if (!this.options.holdScrollDuringWheel) return
+          if (!this._wheelLive) this._wheelSince = this.now()
+          scheduleWheelFlush(150)
+        }
+        el.addEventListener('wheel', onWheel, addEventListenerOptions)
+        this.unsubs.push(() => el.removeEventListener('wheel', onWheel))
       }
 
       this._scrollToOffset(this.getScrollOffset())
@@ -1447,7 +1491,9 @@ export class Virtualizer<
   // A write that is unwanted for another reason (a travelling smooth scroll
   // owns the position) is a separate check at the call sites.
   private _canWriteScroll = () =>
-    !(isIOSWebKit() && this._iosGesture.inMotion()) && !this._reportedOverscroll
+    !(isIOSWebKit() && this._iosGesture.inMotion()) &&
+    !this._reportedOverscroll &&
+    !(this._wheelLive && this.options.holdScrollDuringWheel)
 
   // Write a held correction once a write is possible, from the scroll
   // handler, the touch tail timer, `_willUpdate` and a resize notify. The
